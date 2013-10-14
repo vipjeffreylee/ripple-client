@@ -13,13 +13,14 @@ require('../directives/directives');
 require('../directives/datalinks');
 require('../filters/filters');
 require('../services/id');
-require('../services/blob');
+require('../services/oldblob');
 require('../services/network');
 require('../services/books');
 require('../services/transactions');
 require('../services/ledger');
 require('../services/popup');
 require('../services/rippletxt');
+require('../services/federation');
 require('../services/domainalias');
 
 var app = angular.module('rp', [
