@@ -19,10 +19,10 @@ LoginTab.prototype.generateHtml = function ()
 LoginTab.prototype.angular = function (module) {
   module.controller('LoginCtrl', ['$scope', '$element', '$routeParams',
                                   '$location', 'rpId', '$rootScope',
-                                  'rpPopup',
+                                  'rpPopup', '$timeout',
                                   function ($scope, $element, $routeParams,
                                             $location, $id, $rootScope,
-                                            popup)
+                                            popup, $timeout)
   {
     if ($id.loginStatus) {
       $location.path('/balance');
@@ -41,20 +41,20 @@ LoginTab.prototype.angular = function (module) {
     $scope.loginForm && $scope.loginForm.$setPristine(true);
     $scope.backendMessages = [];
 
+    // Autofill fix
+    $timeout(function(){
+      $scope.$apply(function () {
+        $scope.username = $element.find('input[name="login_username"]').val();
+        $scope.password = $element.find('input[name="login_password"]').val();
+      })
+    }, 1000);
+
     $rootScope.$on("$blobError", function (e, err) {
       console.log("BLOB ERROR", arguments);
       $scope.backendMessages.push({'backend': err.backend, 'message': err.message});
     });
 
-    $scope.submitForm = function()
-    {
-      if ($scope.ajax_loading) return;
-
-      $scope.backendMessages = [];
-
-      // Issue #36: Password managers may change the form values without
-      // triggering the events Angular.js listens for. So we simply force
-      // an update of Angular's model when the form is submitted.
+    var updateFormFields = function(){
       var username;
       var password;
 
@@ -72,6 +72,32 @@ LoginTab.prototype.angular = function (module) {
 
       $scope.loginForm.login_username.$setViewValue(username);
       $scope.loginForm.login_password.$setViewValue(password);
+    };
+
+    // Issues #1024, #1060
+    $scope.$watch('username',function(){
+      $timeout(function(){
+        $scope.$apply(function () {
+         updateFormFields();
+        })
+      }, 50);
+    });
+
+    // Ok, now try to remove this line and then go write "a" for wallet name, and "a" for passphrase.
+    // "Open wallet" is still disabled hah? no worries, just enter anything else and it will be activated.
+    // Probably this is an AngularJS issue. Had no time to check it yet.
+    $scope.$watch('password');
+
+    $scope.submitForm = function()
+    {
+      if ($scope.ajax_loading) return;
+
+      $scope.backendMessages = [];
+
+      // Issue #36: Password managers may change the form values without
+      // triggering the events Angular.js listens for. So we simply force
+      // an update of Angular's model when the form is submitted.
+      updateFormFields();
 
       setImmediate(function () {
         $id.login($scope.username, $scope.password, function (err, blob) {
@@ -113,6 +139,23 @@ LoginTab.prototype.angular = function (module) {
       $scope.status = 'Fetching wallet...';
     };
   }]);
+
+  /**
+   * Focus on username input only if it's empty. Otherwise focus on password field
+   * This directive will not be used anywhere else, that's why it's here.
+   */
+  module.directive('rpFocusOnEmpty', ['$timeout', function($timeout) {
+    return function($scope, element) {
+      $timeout(function(){
+        $scope.$watch(function () {return element.is(':visible')}, function(newValue) {
+          if (newValue === true && !element.val())
+            element.focus();
+        })
+      }, 200)
+    }
+  }]);
 };
+
+
 
 module.exports = LoginTab;

@@ -77,7 +77,8 @@ HistoryTab.prototype.angular = function (module) {
       $scope.filters = {
         'currencies_is_active': false, // we do the currency filter only if this is true, which happens when at least one currency is off
         'currencies': {},
-        'types': ['sent','received','trusting','trusted','offernew','offercancel']
+        'types': ['sent','received','trusting','trusted','offernew','offercancel'],
+        'minimumAmount': 0.000001
       };
     }
 
@@ -86,14 +87,14 @@ HistoryTab.prototype.angular = function (module) {
       var completed = false;
       var history = [];
 
-      var getTx = function(offset){
-        $network.remote.request_account_tx({
-          'account': $id.account,
-          'ledger_index_min': -1,
-          'descending': true,
-          'offset': offset,
-          'limit': 200
-        })
+      var params = {
+        'account': $id.account,
+        'ledger_index_min': -1,
+        'limit': 200
+      };
+
+      var getTx = function(){
+        $network.remote.request_account_tx(params)
         .on('success', function(data) {
           if (data.transactions.length) {
             for(var i=0;i<data.transactions.length;i++) {
@@ -112,10 +113,13 @@ HistoryTab.prototype.angular = function (module) {
               if (tx) history.push(tx);
             }
 
+            params.marker = {'ledger':data.transactions[i-1].tx.inLedger,'seq':0};
+            $scope.tx_marker = params.marker;
+
             if (completed)
               callback(history);
             else
-              getTx(offset+100);
+              getTx();
           } else {
             callback(history);
           }
@@ -129,6 +133,10 @@ HistoryTab.prototype.angular = function (module) {
     $scope.submitDateRangeForm = function() {
       $scope.dateMaxView.setDate($scope.dateMaxView.getDate() + 1); // Including last date
       changeDateRange($scope.dateMinView,$scope.dateMaxView);
+    };
+
+    $scope.submitMinimumAmountForm = function() {
+      updateHistory();
     };
 
     var changeDateRange = function(dateMin,dateMax) {
@@ -174,10 +182,10 @@ HistoryTab.prototype.angular = function (module) {
     }, true);
 
     // New transactions
-    $scope.$watch('history',function(){
+    $scope.$watchCollection('history',function(){
       // TODO This function has a double call on a history change. Don't know why
       // This is a temporoary fix.
-      if (latest && $scope.history[0] && latest.hash == $scope.history[0].hash)
+      if (latest && $scope.history[$scope.history.length-1] && latest.hash == $scope.history[$scope.history.length-1].hash)
         return;
 
       updateHistory();
@@ -186,7 +194,7 @@ HistoryTab.prototype.angular = function (module) {
       if ($scope.history.length)
         updateCurrencies();
 
-      latest = $.extend(true, {}, $scope.history[0]);
+      latest = $.extend(true, {}, $scope.history[$scope.history.length-1]);
     },true);
 
     // Updates the history collection
@@ -229,7 +237,7 @@ HistoryTab.prototype.angular = function (module) {
             return;
 
           // Currency filter
-          if ($scope.filters.currencies_is_active && !_.intersection(currencies,event.affected_currencies).length > 0)
+          if ($scope.filters.currencies_is_active && _.intersection(currencies,event.affected_currencies).length <= 0)
             return;
 
           var effects = [];
@@ -251,6 +259,9 @@ HistoryTab.prototype.angular = function (module) {
 
             effects = [];
 
+            var amount, maxAmount;
+            var minimumAmount = $scope.filters.minimumAmount;
+
             // Balance changer effects
             $.each(event.effects, function(){
               var effect = this;
@@ -258,8 +269,22 @@ HistoryTab.prototype.angular = function (module) {
                   || effect.type == 'balance_change'
                   || effect.type == 'trust_change_balance') {
                 effects.push(effect);
+
+                // Minimum amount filter
+                if (effect.type == 'balance_change' || effect.type == 'trust_change_balance') {
+                  amount = effect.amount.abs().is_native()
+                    ? effect.amount.abs().to_number() / 1000000
+                    : effect.amount.abs().to_number();
+
+                  if (!maxAmount || amount > maxAmount)
+                    maxAmount = amount;
+                }
               }
             });
+
+            // Minimum amount filter
+            if (maxAmount && minimumAmount > maxAmount)
+              return;
 
             event.balanceEffects = effects;
           }
@@ -317,15 +342,24 @@ HistoryTab.prototype.angular = function (module) {
 
       $scope.historyState = 'loading';
 
-      $network.remote.request_account_tx({
+      var limit = 100; // TODO why 100?
+
+      var params = {
         'account': $id.account,
-        'ledger_index_max': $scope.minLedger,
-        'descending': true,
-        'offset': 0,
-        'limit': 100 // TODO why 100?
-      })
+        'ledger_index_min': -1,
+        'limit': limit,
+        'marker': $scope.tx_marker
+      };
+
+      $network.remote.request_account_tx(params)
       .on('success', function(data) {
         $scope.$apply(function () {
+          if (data.transactions.length < limit) {
+
+          }
+
+          $scope.tx_marker = data.marker;
+
           if (data.transactions) {
             var transactions = [];
 
@@ -340,7 +374,7 @@ HistoryTab.prototype.angular = function (module) {
               }
             });
 
-            var newHistory = _.uniq($scope.history.concat(transactions),true,function(ev){return ev.hash});
+            var newHistory = _.uniq($scope.history.concat(transactions),false,function(ev){return ev.hash});
 
             if ($scope.history.length === newHistory.length)
               $scope.historyState = 'full';
